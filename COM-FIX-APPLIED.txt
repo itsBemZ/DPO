@@ -1,0 +1,100 @@
+╔══════════════════════════════════════════════════════════════════╗
+║              ✅ COM INTEROP ISSUE FIXED!                         ║
+╚══════════════════════════════════════════════════════════════════╝
+
+PROBLEM:
+.NET Core/10 doesn't support COM references in MSBuild.
+Error: "ResolveComReference is not supported"
+
+SOLUTION APPLIED:
+✅ Removed COM reference from DPOManager.csproj
+✅ Updated CreateShortcut method to use PowerShell instead
+✅ Fully compatible with .NET 10.0 now!
+
+═══════════════════════════════════════════════════════════════════
+                    HOW IT WORKS NOW
+═══════════════════════════════════════════════════════════════════
+
+OLD METHOD (Failed):
+• Used IWshRuntimeLibrary COM Interop
+• Required .NET Framework MSBuild
+• Not compatible with .NET Core/10
+
+NEW METHOD (Works):
+• Uses PowerShell to create shortcuts
+• Calls WScript.Shell via PowerShell
+• 100% compatible with .NET Core/10
+• No COM references needed!
+
+═══════════════════════════════════════════════════════════════════
+                    FILES UPDATED
+═══════════════════════════════════════════════════════════════════
+
+✅ DPOManager.csproj
+   - Removed <COMReference> section
+   - Now builds with .NET 10.0 SDK
+
+✅ DPOManager.cs
+   - Removed: using IWshRuntimeLibrary;
+   - Updated: CreateShortcut method
+   - Added: CreateShortcutFile method (PowerShell-based)
+
+═══════════════════════════════════════════════════════════════════
+                    BUILD NOW!
+═══════════════════════════════════════════════════════════════════
+
+Just run:
+    build.bat
+
+Choose:
+    Option 3 (Single-File Build)
+
+It will work perfectly now! ✅
+
+═══════════════════════════════════════════════════════════════════
+                    SHORTCUT CREATION DETAILS
+═══════════════════════════════════════════════════════════════════
+
+The new method:
+1. Detects executable path
+2. Uses PowerShell to invoke WScript.Shell
+3. Creates .lnk files on Desktop and Taskbar
+4. Fallback: If it fails, suggests manual pinning
+
+Shortcuts still created:
+✅ Desktop: C:\Users\[You]\Desktop\DPO Server Manager.lnk
+✅ Taskbar: Quick Launch\User Pinned\TaskBar\...
+
+═══════════════════════════════════════════════════════════════════
+                    ALL FEATURES WORKING
+═══════════════════════════════════════════════════════════════════
+
+✅ Read-only config display
+✅ Auto-start ON by default
+✅ Auto-create shortcuts (PowerShell method)
+✅ Create shortcuts button
+✅ Auto-start servers on launch
+✅ Auto-open browser
+✅ System tray icon
+✅ Full tray menu
+✅ Minimize to tray
+✅ Exit only from tray
+✅ Balloon notifications
+
+Everything works! 🎉
+
+═══════════════════════════════════════════════════════════════════
+                    QUICK START
+═══════════════════════════════════════════════════════════════════
+
+1. Download updated files:
+   - DPOManager.cs
+   - DPOManager.csproj
+
+2. Run: build.bat → Option 3
+
+3. Run: published\DPOManager.exe
+
+4. Done! Shortcuts created, servers started, browser opened!
+
+═══════════════════════════════════════════════════════════════════

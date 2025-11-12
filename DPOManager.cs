@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Drawing;
+using System.Reflection;
 
 namespace DPOManager
 {
@@ -47,6 +48,14 @@ namespace DPOManager
         private StreamWriter logWriter;
         private string logFilePath;
 
+        // Tray icon
+        private NotifyIcon trayIcon;
+        private ContextMenuStrip trayMenu;
+        
+        // Settings
+        private bool autoStartEnabled = true; // Default ON
+        private string settingsFile;
+
         // GUI Controls
         private TextBox txtLog;
         private Button btnStart;
@@ -54,13 +63,13 @@ namespace DPOManager
         private Button btnOpenBrowser;
         private Button btnStartPing;
         private Button btnStopPing;
+        private Button btnCreateShortcuts;
         private Label lblStatus;
         private Label lblNginxStatus;
         private Label lblPhpStatus;
         private Label lblPingStatus;
-        private TextBox txtDpoServer;
-        private NumericUpDown numHttpPort;
-        private NumericUpDown numRestartInterval;
+        private Label lblDpoServerDisplay;
+        private Label lblHttpPortDisplay;
         private ProgressBar progressBar;
         private CheckBox chkAutoStart;
         #endregion
@@ -70,8 +79,11 @@ namespace DPOManager
             InitializeComponent();
             InitializeConfiguration(args);
             InitializeLogging();
+            InitializeTrayIcon();
+            LoadSettings();
             
-            if (chkAutoStart.Checked)
+            // Auto-start servers ONLY if enabled in settings
+            if (autoStartEnabled && chkAutoStart.Checked)
             {
                 Task.Run(async () => 
                 {
@@ -91,62 +103,58 @@ namespace DPOManager
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormClosing += OnFormClosing;
 
-            // Configuration Panel
+            // Configuration Panel - Display Only
             GroupBox grpConfig = new GroupBox
             {
-                Text = "Configuration",
+                Text = "Configuration (Read-Only)",
                 Location = new Point(10, 10),
-                Size = new Size(860, 120)
+                Size = new Size(860, 80)
             };
 
-            Label lblServer = new Label { Text = "DPO Server:", Location = new Point(10, 25), AutoSize = true };
-            txtDpoServer = new TextBox { Location = new Point(120, 22), Width = 200, Text = "10.142.0.204" };
-
-            Label lblPort = new Label { Text = "HTTP Port:", Location = new Point(10, 55), AutoSize = true };
-            numHttpPort = new NumericUpDown 
+            Label lblServerLabel = new Label { Text = "DPO Server:", Location = new Point(10, 25), AutoSize = true };
+            lblDpoServerDisplay = new Label 
             { 
-                Location = new Point(120, 52), 
-                Width = 100, 
-                Minimum = 1, 
-                Maximum = 65535, 
-                Value = 80 
+                Text = "10.142.0.204", 
+                Location = new Point(120, 25), 
+                AutoSize = true,
+                Font = new Font(FontFamily.GenericSansSerif, 9, FontStyle.Bold)
             };
 
-            Label lblInterval = new Label { Text = "PHP Restart (min):", Location = new Point(10, 85), AutoSize = true };
-            numRestartInterval = new NumericUpDown 
+            Label lblPortLabel = new Label { Text = "HTTP Port:", Location = new Point(10, 50), AutoSize = true };
+            lblHttpPortDisplay = new Label 
             { 
-                Location = new Point(120, 82), 
-                Width = 100, 
-                Minimum = 1, 
-                Maximum = 1440, 
-                Value = 240 
+                Text = "80", 
+                Location = new Point(120, 50), 
+                AutoSize = true,
+                Font = new Font(FontFamily.GenericSansSerif, 9, FontStyle.Bold)
             };
 
             chkAutoStart = new CheckBox 
             { 
-                Text = "Auto-start on launch", 
+                Text = "Auto-start servers on launch", 
                 Location = new Point(350, 25), 
-                AutoSize = true 
+                AutoSize = true,
+                Checked = true // Default ON
             };
+            chkAutoStart.CheckedChanged += (s, e) => SaveSettings();
 
             grpConfig.Controls.AddRange(new Control[] { 
-                lblServer, txtDpoServer, lblPort, numHttpPort, 
-                lblInterval, numRestartInterval, chkAutoStart 
+                lblServerLabel, lblDpoServerDisplay, lblPortLabel, lblHttpPortDisplay, chkAutoStart 
             });
 
             // Control Panel
             GroupBox grpControls = new GroupBox
             {
                 Text = "Controls",
-                Location = new Point(10, 140),
-                Size = new Size(860, 80)
+                Location = new Point(10, 100),
+                Size = new Size(860, 120)
             };
 
             btnStart = new Button 
             { 
                 Text = "Start Servers", 
                 Location = new Point(10, 25), 
-                Size = new Size(120, 40),
+                Size = new Size(120, 35),
                 BackColor = Color.LightGreen
             };
             btnStart.Click += (s, e) => StartServers();
@@ -155,7 +163,7 @@ namespace DPOManager
             { 
                 Text = "Stop Servers", 
                 Location = new Point(140, 25), 
-                Size = new Size(120, 40),
+                Size = new Size(120, 35),
                 BackColor = Color.LightCoral,
                 Enabled = false
             };
@@ -165,7 +173,7 @@ namespace DPOManager
             { 
                 Text = "Open Browser", 
                 Location = new Point(270, 25), 
-                Size = new Size(120, 40),
+                Size = new Size(120, 35),
                 Enabled = false
             };
             btnOpenBrowser.Click += (s, e) => OpenBrowser();
@@ -174,7 +182,7 @@ namespace DPOManager
             { 
                 Text = "Start Ping", 
                 Location = new Point(400, 25), 
-                Size = new Size(120, 40),
+                Size = new Size(120, 35),
                 BackColor = Color.LightBlue
             };
             btnStartPing.Click += (s, e) => StartPing();
@@ -183,13 +191,22 @@ namespace DPOManager
             { 
                 Text = "Stop Ping", 
                 Location = new Point(530, 25), 
-                Size = new Size(120, 40),
+                Size = new Size(120, 35),
                 Enabled = false
             };
             btnStopPing.Click += (s, e) => StopPing();
 
+            btnCreateShortcuts = new Button 
+            { 
+                Text = "Create Shortcuts", 
+                Location = new Point(10, 70), 
+                Size = new Size(150, 35),
+                BackColor = Color.LightYellow
+            };
+            btnCreateShortcuts.Click += (s, e) => CreateShortcuts();
+
             grpControls.Controls.AddRange(new Control[] { 
-                btnStart, btnStop, btnOpenBrowser, btnStartPing, btnStopPing 
+                btnStart, btnStop, btnOpenBrowser, btnStartPing, btnStopPing, btnCreateShortcuts 
             });
 
             // Status Panel
@@ -268,20 +285,21 @@ namespace DPOManager
 
         private void InitializeConfiguration(string[] args)
         {
-            try { dpoServer = args.Length > 0 ? args[0] : txtDpoServer.Text; }
-            catch { dpoServer = txtDpoServer.Text; }
+            settingsFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dpo_settings.ini");
 
-            try { httpPort = args.Length > 1 ? int.Parse(args[1]) : (int)numHttpPort.Value; }
-            catch { httpPort = (int)numHttpPort.Value; }
+            try { dpoServer = args.Length > 0 ? args[0] : "10.142.0.204"; }
+            catch { dpoServer = "10.142.0.204"; }
 
-            try { requestDelay = args.Length > 2 ? int.Parse(args[2]) : (int)numRestartInterval.Value; }
-            catch { requestDelay = (int)numRestartInterval.Value; }
+            try { httpPort = args.Length > 1 ? int.Parse(args[1]) : 80; }
+            catch { httpPort = 80; }
 
-            phpRestartInterval = requestDelay * 60; // Convert to seconds
+            try { requestDelay = args.Length > 2 ? int.Parse(args[2]) : 240; }
+            catch { requestDelay = 240; }
 
-            txtDpoServer.Text = dpoServer;
-            numHttpPort.Value = httpPort;
-            numRestartInterval.Value = requestDelay;
+            phpRestartInterval = requestDelay * 60;
+
+            lblDpoServerDisplay.Text = dpoServer;
+            lblHttpPortDisplay.Text = httpPort.ToString();
         }
 
         private void InitializeLogging()
@@ -305,6 +323,297 @@ namespace DPOManager
                 MessageBox.Show($"Failed to initialize logging: {ex.Message}", "Warning", 
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
+        }
+
+        private void InitializeTrayIcon()
+        {
+            trayMenu = new ContextMenuStrip();
+            trayMenu.Items.Add("Show Window", null, (s, e) => ShowMainWindow());
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add("Start Servers", null, (s, e) => StartServers());
+            trayMenu.Items.Add("Stop Servers", null, (s, e) => StopServers());
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add("Open Browser", null, (s, e) => OpenBrowser());
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add("Start Ping", null, (s, e) => StartPing());
+            trayMenu.Items.Add("Stop Ping", null, (s, e) => StopPing());
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add("Exit", null, (s, e) => ExitApplication());
+
+            trayIcon = new NotifyIcon
+            {
+                Text = "DPO Server Manager",
+                ContextMenuStrip = trayMenu,
+                Visible = true
+            };
+
+            // Try to load app.ico, fallback to generated icon
+            try
+            {
+                string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app.ico");
+                if (File.Exists(iconPath))
+                {
+                    this.Icon = new Icon(iconPath);
+                    // Start with red icon (servers stopped)
+                    trayIcon.Icon = CreateColoredTrayIcon(Color.Red);
+                    Log("✓ Loaded app.ico for application and tray");
+                }
+                else
+                {
+                    // Start with red icon (servers stopped)
+                    trayIcon.Icon = CreateColoredTrayIcon(Color.Red);
+                    Log("app.ico not found, using generated icon");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Error loading app.ico: {ex.Message}");
+                trayIcon.Icon = CreateColoredTrayIcon(Color.Red);
+            }
+
+            trayIcon.DoubleClick += (s, e) => ShowMainWindow();
+        }
+
+        private Icon CreateColoredTrayIcon(Color color)
+        {
+            Bitmap bmp = new Bitmap(16, 16);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Transparent);
+                using (SolidBrush brush = new SolidBrush(color))
+                {
+                    g.FillEllipse(brush, 2, 2, 12, 12);
+                }
+            }
+            IntPtr hIcon = bmp.GetHicon();
+            return Icon.FromHandle(hIcon);
+        }
+
+        private void UpdateTrayIconColor(bool serversRunning)
+        {
+            try
+            {
+                if (trayIcon != null)
+                {
+                    Color iconColor = serversRunning ? Color.Green : Color.Red;
+                    trayIcon.Icon = CreateColoredTrayIcon(iconColor);
+                    trayIcon.Text = serversRunning ? "DPO Server Manager - Running" : "DPO Server Manager - Stopped";
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Error updating tray icon: {ex.Message}");
+            }
+        }
+        #endregion
+
+        #region Settings Management
+        private void LoadSettings()
+        {
+            try
+            {
+                if (System.IO.File.Exists(settingsFile))
+                {
+                    string[] lines = System.IO.File.ReadAllLines(settingsFile);
+                    foreach (string line in lines)
+                    {
+                        if (line.StartsWith("AutoStart="))
+                        {
+                            autoStartEnabled = bool.Parse(line.Split('=')[1]);
+                            chkAutoStart.Checked = autoStartEnabled;
+                        }
+                    }
+                }
+                else
+                {
+                    // First time run - create shortcuts automatically
+                    CreateShortcuts();
+                    SaveSettings();
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Error loading settings: {ex.Message}");
+            }
+        }
+
+        private void SaveSettings()
+        {
+            try
+            {
+                autoStartEnabled = chkAutoStart.Checked;
+                System.IO.File.WriteAllText(settingsFile, $"AutoStart={autoStartEnabled}");
+                Log($"Settings saved - AutoStart: {autoStartEnabled}");
+            }
+            catch (Exception ex)
+            {
+                Log($"Error saving settings: {ex.Message}");
+            }
+        }
+        #endregion
+
+        #region Shortcuts Management
+        private void CreateShortcuts()
+        {
+            try
+            {
+                // Get the actual running executable path
+                string exePath = Process.GetCurrentProcess().MainModule.FileName;
+                
+                Log($"Creating shortcuts for: {exePath}");
+
+                // Desktop shortcut
+                string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                string desktopShortcut = Path.Combine(desktopPath, "DPO Server Manager.lnk");
+                CreateShortcutFile(exePath, desktopShortcut);
+
+                // Quick Launch / Taskbar
+                string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                string quickLaunchPath = Path.Combine(appDataPath, @"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar");
+                
+                if (Directory.Exists(quickLaunchPath))
+                {
+                    string taskbarShortcut = Path.Combine(quickLaunchPath, "DPO Server Manager.lnk");
+                    CreateShortcutFile(exePath, taskbarShortcut);
+                }
+
+                Log("✓ Shortcuts created on Desktop and Taskbar");
+                ShowTrayNotification("Shortcuts Created", "Desktop and Taskbar shortcuts have been created successfully!");
+            }
+            catch (Exception ex)
+            {
+                Log($"Error creating shortcuts: {ex.Message}", true);
+                MessageBox.Show($"Failed to create shortcuts:\n{ex.Message}\n\nYou can manually right-click the .exe and pin to taskbar.", "Shortcut Error", 
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void CreateShortcutFile(string targetPath, string shortcutPath)
+        {
+            try
+            {
+                // Ensure we have the actual .exe path, not .dll
+                if (!targetPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    // For single-file publish, the entry point is the .exe
+                    string exePath = Process.GetCurrentProcess().MainModule.FileName;
+                    if (File.Exists(exePath))
+                    {
+                        targetPath = exePath;
+                    }
+                }
+
+                string workingDir = Path.GetDirectoryName(targetPath);
+                
+                // Escape paths for PowerShell
+                string escapedTarget = targetPath.Replace("'", "''");
+                string escapedShortcut = shortcutPath.Replace("'", "''");
+                string escapedWorkingDir = workingDir.Replace("'", "''");
+                
+                string psCommand = $@"
+$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut('{escapedShortcut}')
+$Shortcut.TargetPath = '{escapedTarget}'
+$Shortcut.WorkingDirectory = '{escapedWorkingDir}'
+$Shortcut.Description = 'DPO Server Manager - Nginx & PHP-CGI Management'
+$Shortcut.Save()
+";
+                
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -Command \"{psCommand.Replace("\"", "`\"")}\"",
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                using (Process process = Process.Start(psi))
+                {
+                    process.WaitForExit(5000);
+                    string output = process.StandardOutput.ReadToEnd();
+                    string error = process.StandardError.ReadToEnd();
+                    
+                    if (process.ExitCode == 0)
+                    {
+                        Log($"✓ Created shortcut: {shortcutPath}");
+                        Log($"  Target: {targetPath}");
+                    }
+                    else
+                    {
+                        Log($"Warning: Shortcut creation had issues. Exit code: {process.ExitCode}");
+                        if (!string.IsNullOrEmpty(error))
+                        {
+                            Log($"  Error: {error}");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Error creating shortcut file {shortcutPath}: {ex.Message}");
+            }
+        }
+        #endregion
+
+        #region Tray Icon Management
+        private void ShowMainWindow()
+        {
+            this.Show();
+            this.WindowState = FormWindowState.Normal;
+            this.ShowInTaskbar = true;
+            this.BringToFront();
+        }
+
+        private void MinimizeToTray()
+        {
+            this.Hide();
+            this.ShowInTaskbar = false;
+            ShowTrayNotification("DPO Manager", "Application minimized to system tray. Double-click icon to restore.");
+        }
+
+        private void ShowTrayNotification(string title, string message)
+        {
+            if (trayIcon != null)
+            {
+                trayIcon.BalloonTipTitle = title;
+                trayIcon.BalloonTipText = message;
+                trayIcon.ShowBalloonTip(3000);
+            }
+        }
+
+        private void ExitApplication()
+        {
+            if (btnStop.Enabled)
+            {
+                var result = MessageBox.Show(
+                    "Servers are still running. Stop them before exiting?",
+                    "Confirm Exit",
+                    MessageBoxButtons.YesNoCancel,
+                    MessageBoxIcon.Question);
+
+                if (result == DialogResult.Cancel)
+                    return;
+
+                if (result == DialogResult.Yes)
+                    StopServers();
+            }
+
+            StopPing();
+
+            try
+            {
+                Log("=== Application closing via tray exit ===");
+                logWriter?.Close();
+                logWriter?.Dispose();
+            }
+            catch { }
+
+            trayIcon.Visible = false;
+            trayIcon.Dispose();
+
+            Application.Exit();
         }
         #endregion
 
@@ -333,10 +642,6 @@ namespace DPOManager
         private void AppendLog(string message, bool isError)
         {
             txtLog.AppendText(message + Environment.NewLine);
-            if (isError)
-            {
-                // Optionally highlight errors
-            }
         }
         #endregion
 
@@ -357,7 +662,7 @@ namespace DPOManager
             }
 
             string nginxExe = Path.Combine(nginxPath, "nginx.exe");
-            if (!File.Exists(nginxExe))
+            if (!System.IO.File.Exists(nginxExe))
             {
                 Log($"ERROR: nginx.exe not found at: {nginxExe}", true);
                 MessageBox.Show($"nginx.exe not found at:\n{nginxExe}", 
@@ -374,7 +679,7 @@ namespace DPOManager
             }
 
             string phpCgiExe = Path.Combine(phpCgiPath, "php-cgi.exe");
-            if (!File.Exists(phpCgiExe))
+            if (!System.IO.File.Exists(phpCgiExe))
             {
                 Log($"ERROR: php-cgi.exe not found at: {phpCgiExe}", true);
                 MessageBox.Show($"php-cgi.exe not found at:\n{phpCgiExe}", 
@@ -448,14 +753,6 @@ namespace DPOManager
 
             try
             {
-                // Read current configuration
-                dpoServer = txtDpoServer.Text;
-                httpPort = (int)numHttpPort.Value;
-                requestDelay = (int)numRestartInterval.Value;
-                phpRestartInterval = requestDelay * 60;
-
-                // Validate paths
-                progressBar.Value = 20;
                 if (!ValidateServerPaths())
                 {
                     UpdateStatus("Failed: Invalid paths");
@@ -464,13 +761,11 @@ namespace DPOManager
                     return;
                 }
 
-                // Kill existing processes
                 progressBar.Value = 30;
                 Log("Terminating existing nginx and php-cgi processes...");
                 KillExistingProcesses();
                 await Task.Delay(1000);
 
-                // Check port availability
                 progressBar.Value = 40;
                 Log($"Checking port {httpPort} availability...");
                 if (!await WaitForPortAvailable(httpPort, 5, 1000))
@@ -484,15 +779,12 @@ namespace DPOManager
                     return;
                 }
 
-                // Setup web root
                 progressBar.Value = 50;
                 SetupWebRoot();
 
-                // Configure Nginx
                 progressBar.Value = 60;
                 ConfigureNginx();
 
-                // Start Nginx
                 progressBar.Value = 70;
                 if (!StartNginx())
                 {
@@ -504,7 +796,6 @@ namespace DPOManager
 
                 await Task.Delay(1000);
 
-                // Start PHP-CGI
                 progressBar.Value = 80;
                 if (!StartPhpCgi())
                 {
@@ -515,11 +806,8 @@ namespace DPOManager
                     return;
                 }
 
-                // Start health checks
                 progressBar.Value = 90;
                 StartHealthChecks();
-
-                // Start PHP restart timer
                 StartPhpRestartTimer();
 
                 progressBar.Value = 100;
@@ -528,9 +816,15 @@ namespace DPOManager
                 btnOpenBrowser.Enabled = true;
                 
                 Log("=== All servers started successfully ===");
+                UpdateTrayIconColor(true); // Green icon
+                ShowTrayNotification("DPO Manager", "Servers started successfully!");
                 
                 await Task.Delay(500);
                 progressBar.Value = 0;
+
+                // Auto-open browser after servers start
+                await Task.Delay(2000);
+                OpenBrowser();
             }
             catch (Exception ex)
             {
@@ -633,7 +927,7 @@ namespace DPOManager
                 string nginxConfigContent = GenerateNginxConfig(httpPort.ToString(), "9000");
                 string configFile = Path.Combine(nginxConfigPath, "nginx.conf");
                 
-                File.WriteAllText(configFile, nginxConfigContent);
+                System.IO.File.WriteAllText(configFile, nginxConfigContent);
                 Log($"✓ Nginx configuration written to: {configFile}");
             }
             catch (Exception ex)
@@ -766,6 +1060,8 @@ namespace DPOManager
                 btnOpenBrowser.Enabled = false;
                 UpdateStatus("Servers stopped");
                 Log("=== Shutdown completed ===");
+                UpdateTrayIconColor(false); // Red icon
+                ShowTrayNotification("DPO Manager", "Servers stopped successfully!");
             }
             catch (Exception ex)
             {
@@ -808,11 +1104,9 @@ namespace DPOManager
         {
             try
             {
-                // Try graceful shutdown first
                 Process stopProcess = StartProcess("nginx-stop", nginxPath, "nginx.exe", "-s quit");
                 stopProcess?.WaitForExit(5000);
 
-                // Force kill if still running
                 foreach (var process in Process.GetProcessesByName("nginx"))
                 {
                     try
@@ -840,7 +1134,7 @@ namespace DPOManager
         private void StartHealthChecks()
         {
             healthCheckTimer = new System.Windows.Forms.Timer();
-            healthCheckTimer.Interval = 5000; // Check every 5 seconds
+            healthCheckTimer.Interval = 5000;
             healthCheckTimer.Tick += HealthCheckTimer_Tick;
             healthCheckTimer.Start();
             Log("Health check monitoring started (5s interval)");
@@ -866,7 +1160,6 @@ namespace DPOManager
             {
                 Log($"Health check failed - Nginx: {nginxHealthy}, PHP: {phpHealthy}", true);
                 
-                // Attempt recovery
                 if (!phpHealthy && nginxHealthy)
                 {
                     Log("Attempting PHP-CGI recovery...");
@@ -945,7 +1238,6 @@ namespace DPOManager
 
             try
             {
-                // Kill PHP-CGI
                 if (phpCgiProcess != null && !phpCgiProcess.HasExited)
                 {
                     phpCgiProcess.Kill();
@@ -964,17 +1256,14 @@ namespace DPOManager
 
                 UpdatePhpStatus(false);
 
-                // Wait for port release
                 await Task.Delay(500);
 
-                // Wait for port 9000 to be available
                 bool portAvailable = await WaitForPortAvailable(9000, 5, 500);
                 if (!portAvailable)
                 {
                     Log("WARNING: Port 9000 may still be in use", true);
                 }
 
-                // Restart
                 if (StartPhpCgi())
                 {
                     Log($"✓ PHP-CGI restart #{phpRefreshCounter} completed successfully");
@@ -983,7 +1272,6 @@ namespace DPOManager
                 {
                     Log($"ERROR: PHP-CGI restart #{phpRefreshCounter} failed", true);
                     
-                    // Retry once
                     await Task.Delay(2000);
                     if (StartPhpCgi())
                     {
@@ -1114,7 +1402,6 @@ namespace DPOManager
                 {
                     Log("✓ Browser opened successfully");
                     
-                    // Wait and send F11 for fullscreen
                     Task.Run(async () =>
                     {
                         await Task.Delay(4000);
@@ -1283,35 +1570,12 @@ http {{
         #region Form Events
         private void OnFormClosing(object sender, FormClosingEventArgs e)
         {
-            if (btnStop.Enabled)
+            // Prevent closing, minimize to tray instead
+            if (e.CloseReason == CloseReason.UserClosing)
             {
-                var result = MessageBox.Show(
-                    "Servers are still running. Do you want to stop them before exiting?",
-                    "Confirm Exit",
-                    MessageBoxButtons.YesNoCancel,
-                    MessageBoxIcon.Question);
-
-                if (result == DialogResult.Cancel)
-                {
-                    e.Cancel = true;
-                    return;
-                }
-
-                if (result == DialogResult.Yes)
-                {
-                    StopServers();
-                }
+                e.Cancel = true;
+                MinimizeToTray();
             }
-
-            StopPing();
-
-            try
-            {
-                Log("=== Application closing ===");
-                logWriter?.Close();
-                logWriter?.Dispose();
-            }
-            catch { }
         }
         #endregion
 
