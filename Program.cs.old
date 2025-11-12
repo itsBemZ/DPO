@@ -1,0 +1,560 @@
+﻿using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using System.Security.AccessControl;
+using System.IO.Abstractions;
+using System.Text;
+using System.Timers;
+using System.Net.Http;
+using System;
+using System.IO.Compression;
+using System.Net;
+using System.Net.Http.Headers;
+using System.ComponentModel;
+
+class Program
+{
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte bVk, byte bScan, int dwFlags, int dwExtraInfo);
+    [DllImport("user32.dll")]
+    static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    private const byte VK_F11 = 0x7A;
+    private const int KEYEVENTF_KEYDOWN = 0x0;
+    private const int KEYEVENTF_KEYUP = 0x2;
+
+    private static Process nginxProcess;
+    private static Process nginxStopProcess;
+    private static Process phpCgiProcess;
+    // private static Process phpCgiProcess_1;
+    // private static Process phpCgiProcess_2;
+    // private static Process phpCgiProcess_3;
+    private static string nginxPath;
+    private static string phpCgiPath;
+
+    private static string dpoServer;
+    private static int httpPort;
+    private static int requestDelay;
+
+    private static string nginxConfigContent;
+    private static int phpRefreshCounter = 0;
+    // private static string htmlPhpUpload;
+
+    static void Main(string[] args)
+    {
+        try { dpoServer = args[0]; }
+        catch (IndexOutOfRangeException) { dpoServer = "10.142.0.204"; }
+
+        try { int.TryParse(args[1], out httpPort); }
+        catch (IndexOutOfRangeException) { httpPort = 80; }
+
+        try { int.TryParse(args[2], out requestDelay); }
+        catch (IndexOutOfRangeException) { requestDelay = 30; }
+
+
+        nginxConfigContent = setNginxConfigContent(httpPort.ToString(), "9000");
+        //nginxConfigContent = setNginxLoadBalancedConfigContent(httpPort.ToString());
+
+        ConsoleKeyInfo cki;
+        Console.TreatControlCAsInput = true;
+
+        foreach (var process in Process.GetProcessesByName("nginx")) { process.Kill(); }
+        foreach (var process in Process.GetProcessesByName("php-cgi")) { process.Kill(); }
+
+        Run();
+        //StartOffline();
+        StartOnline();
+
+        Console.WriteLine("\n(q) To (q)uit DPO application and shutdown.");
+        Console.WriteLine("(o) To open DPO application on this device.");
+        // Console.WriteLine("(o) To open DPO (o)ffline version on this device.");
+        // Console.WriteLine("(u) To (u)pdate DPO offline version on this device.");
+
+        RequestRefreshPhpOnATimer(60 * requestDelay);
+        //RequestSynchronizeClientOnATimer(requestDelay);
+
+        do
+        {
+            cki = Console.ReadKey();
+
+            if (cki.Key.ToString() == "Q") { Shutdown(); break; }
+
+            if (cki.Key.ToString() == "O") { StartOnline(); }
+
+            //if (cki.Key.ToString() == "O") { StartOffline(); }
+
+            //if (cki.Key.ToString() == "U") { DoUpdate("http://" + dpoServer + "/offline/dpo.zip"); }
+
+        } while (true);
+    }
+
+    private static void Run()
+    {
+        Console.WriteLine("Starting DPO offline mode configurations...");
+
+        string webRootPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "nginx\\html");
+        if (!Directory.Exists(webRootPath)) { Directory.CreateDirectory(webRootPath); }
+        GrantPermissionsToIUSR(webRootPath);
+
+        nginxPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "nginx");
+        phpCgiPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "php");
+        string dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "nginx\\html\\db");
+        string nginxConfigPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "nginx\\conf");
+
+        // File.WriteAllText(webRootPath + "/update.php", htmlPhpUpload);
+        File.WriteAllText(nginxConfigPath + "/nginx.conf", nginxConfigContent);
+
+        StartProcess("nginx start", nginxPath, "nginx.exe", $"");
+        StartProcess("php-cgi", phpCgiPath, "php-cgi.exe", $"-b 127.0.0.1:9000");
+        //StartProcess("php-cgi-1", phpCgiPath, "php-cgi.exe", $"-b 127.0.0.1:9001");
+        //StartProcess("php-cgi-2", phpCgiPath, "php-cgi.exe", $"-b 127.0.0.1:9002");
+        //StartProcess("php-cgi-3", phpCgiPath, "php-cgi.exe", $"-b 127.0.0.1:9003");
+
+
+        //StartProcess("sqlite", dbPath, "cmd.exe", $"/c sqlite3.exe dpo.sqlt < master.sql");
+        // "/C" + dbPath + "/sqlite3 dpo.sqlt < master.sql"
+
+        /* UPDATE ON KEY STROKE HANDLING THIS
+        if (!File.Exists(dbPath + "/offline_db.sqlite"))
+        {
+            File.Copy(dbPath + "/offline.sqlite", dbPath + "/offline_db.sqlite");
+            Console.WriteLine("Empty database created because it did not exist...");
+        }  */
+
+
+        Console.WriteLine("DPO offline correctly configured...");
+    }
+
+    private static void RequestRefreshPhpOnATimer(int seconds)
+    {
+        System.Timers.Timer aTimer = new System.Timers.Timer();
+        aTimer.Elapsed += new ElapsedEventHandler(OnRefreshPhpTimedEvent);
+        aTimer.Interval = seconds * 1000;
+        aTimer.Enabled = true;
+    }
+
+    private static void RequestRefreshLoadBalancedPhpOnATimer(int seconds)
+    {
+        System.Timers.Timer aTimer = new System.Timers.Timer();
+        aTimer.Elapsed += new ElapsedEventHandler(OnRefreshLoadBalancedPhpTimedEvent);
+        aTimer.Interval = seconds * 1000;
+        aTimer.Enabled = true;
+    } 
+
+    private static void OnRefreshPhpTimedEvent(object source, ElapsedEventArgs e) => RequestRefreshPhp();
+
+    private static void OnRefreshLoadBalancedPhpTimedEvent(object source, ElapsedEventArgs e) => RequestLoadBalancedRefreshPhp();
+
+    private static async void RequestRefreshPhp()
+    {
+        Console.WriteLine($"{phpRefreshCounter}: PHP server 9000 reboot");
+
+        phpCgiProcess.Kill();
+        // add this to make sure php-cgi is getting killed
+        foreach (var process in Process.GetProcessesByName("php-cgi")) { process.Kill(); }
+        StartProcess("php-cgi", phpCgiPath, "php-cgi.exe", $"-b 127.0.0.1:9000");
+    }
+
+    private static async void RequestLoadBalancedRefreshPhp()
+    {
+        Console.WriteLine($"{phpRefreshCounter}: PHP server 900{phpRefreshCounter % 3 + 1} reboot");
+
+        switch (phpRefreshCounter % 3 + 1)
+        {
+            case 1:
+                phpCgiProcess_1.Kill();
+                StartProcess("php-cgi-1", phpCgiPath, "php-cgi.exe", $"-b 127.0.0.1:9001");
+                break;
+            case 2:
+                phpCgiProcess_2.Kill();
+                StartProcess("php-cgi-2", phpCgiPath, "php-cgi.exe", $"-b 127.0.0.1:9002");
+                break;
+            case 3:
+                phpCgiProcess_3.Kill();
+                StartProcess("php-cgi-3", phpCgiPath, "php-cgi.exe", $"-b 127.0.0.1:9003");
+                break;
+        }
+
+        phpRefreshCounter++;
+    }
+    private static void RequestSynchronizeClientOnATimer(int seconds)
+    {
+        System.Timers.Timer aTimer = new System.Timers.Timer();
+        aTimer.Elapsed += new ElapsedEventHandler(OnSynchronizeTimedEvent);
+        aTimer.Interval = seconds * 1000;
+        aTimer.Enabled = true;
+    }
+
+    private static void OnSynchronizeTimedEvent(object source, ElapsedEventArgs e) => RequestSynchronizeClient();
+
+    private static async void RequestSynchronizeClient()
+    {
+        var client = new HttpClient();
+
+        HttpResponseMessage response = await client.GetAsync("http://localhost:" + httpPort + "/cron/synchronize.php");
+        HttpContent responseContent = response.Content;
+        string result = "";
+
+        using (var reader = new StreamReader(await responseContent.ReadAsStreamAsync()))
+        {
+            result = await reader.ReadToEndAsync();
+        }
+
+        var paragraph = result.Split("<br>");
+        Console.WriteLine("Response from client synchronization endpoint: ");
+        foreach (var line in paragraph) Console.WriteLine("    " + line);
+    }
+
+    private static void GrantPermissionsToIUSR(string path)
+    {
+#if RELEASE
+        // if (!IsAdministrator())
+        // {
+            // Console.WriteLine("If it is the first time running this application you may need to run it as administrator.");
+            // Environment.Exit(1);
+        // }
+#endif
+
+        DirectoryInfo directory = new DirectoryInfo(path);
+        DirectorySecurity directorySecurity = directory.GetAccessControl();
+
+        FileSystemAccessRule rule = new FileSystemAccessRule("IUSR", FileSystemRights.ReadAndExecute, AccessControlType.Allow);
+
+        directorySecurity.AddAccessRule(rule);
+        directory.SetAccessControl(directorySecurity);
+
+        Console.WriteLine("Permissions granted to IUSR.");
+    }
+
+    private static void StartProcess(string type, string path, string fileName, string arguments = "")
+    {
+        fileName = fileName == "cmd.exe" ? "C:\\windows\\system32\\cmd.exe" : @$"""{path}\{fileName}""";
+
+        Process process = new Process();
+        process.StartInfo.WorkingDirectory = path;
+        process.StartInfo.FileName = fileName;
+        process.StartInfo.Arguments = arguments;
+        process.StartInfo.CreateNoWindow = true;
+        process.StartInfo.UseShellExecute = false;
+        process.StartInfo.RedirectStandardOutput = true;
+        process.Start();
+
+        switch (type)
+        {
+            case "nginx start":
+                nginxProcess = process;
+                break;
+            case "nginx stop":
+                nginxStopProcess = process;
+                break;
+            case "php-cgi":
+                phpCgiProcess = process;
+                break;
+            case "php-cgi-1":
+                phpCgiProcess_1 = process;
+                break;
+            case "php-cgi-2":
+                phpCgiProcess_2 = process;
+                break;
+            case "php-cgi-3":
+                phpCgiProcess_3 = process;
+                break;
+            default:
+                break;
+        }
+    }
+
+    private static void Shutdown()
+    {
+        Console.WriteLine("\n...Shutting down initiated...");
+
+        phpCgiProcess.Kill();
+        //phpCgiProcess_1.Kill();
+        //phpCgiProcess_2.Kill();
+        //phpCgiProcess_3.Kill();
+        Console.WriteLine("...php processes killed...");
+
+        StartProcess("nginx stop", nginxPath, "nginx.exe", $"-s stop");
+        do { } while (Process.GetProcessesByName("nginx").Length > 0);
+        Console.WriteLine("...nginx service stopped...");
+
+        Console.WriteLine("DPO application gracefully shutdown...");
+    }
+
+    private static bool IsAdministrator()
+    {
+        if (!(RuntimeInformation.IsOSPlatform(OSPlatform.Windows))) return false;
+
+        WindowsIdentity identity = WindowsIdentity.GetCurrent();
+        WindowsPrincipal principal = new WindowsPrincipal(identity);
+        return principal.IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    public static async Task DownloadFile(string endpointUrl, string destinationPath)
+    {
+        string cacheBuster = $"cb={DateTime.UtcNow.Ticks}";
+        endpointUrl = $"{endpointUrl}?{cacheBuster}";
+
+        using (HttpClient client = new HttpClient())
+        {
+            client.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue { NoCache = true };
+
+            HttpResponseMessage response = await client.GetAsync(endpointUrl);
+
+            if (response.IsSuccessStatusCode)
+            {
+                using (Stream contentStream = await response.Content.ReadAsStreamAsync())
+                {
+                    using (FileStream fileStream = File.Create(destinationPath))
+                    {
+                        await contentStream.CopyToAsync(fileStream);
+                    }
+                }
+
+                Console.WriteLine("DPO offline application downloaded successfully.");
+            }
+            else
+            {
+                Console.WriteLine("Failed to download DPO. Status code: " + response.StatusCode);
+            }
+        }
+    }
+
+    private static async void DoUpdate(string url)
+    {
+        Console.WriteLine("\n...Udpating DPO offline application on this device's browser...");
+
+        string htmlPath = Directory.GetCurrentDirectory() + "\\nginx\\html";
+        System.IO.DirectoryInfo htmlDir = new DirectoryInfo(htmlPath);
+
+        foreach (FileInfo oldFiles in htmlDir.GetFiles()) { oldFiles.Delete(); }
+        foreach (DirectoryInfo oldDirs in htmlDir.GetDirectories()) { oldDirs.Delete(true); }
+
+        await DownloadFile(url, "nginx\\html\\temp.zip");
+
+        ZipFile.ExtractToDirectory("nginx\\html\\temp.zip", "nginx\\html");
+        File.Delete("nginx\\html\\temp.zip");
+
+        Console.WriteLine("New DPO offline version installed sussessfully");
+    }
+
+    private static void StartOffline(bool pressF11 = true)
+    {
+        Console.WriteLine("\n...Opening DPO offline application on this device's browser...");
+
+        ProcessStartInfo startInfo = new ProcessStartInfo
+        {
+            FileName = $"http://localhost:{httpPort}",
+            UseShellExecute = true,
+            Verb = "open",
+        };
+
+        try
+        {
+            Process browserProcess = new Process();
+            browserProcess.StartInfo = startInfo;
+            browserProcess.Start();
+
+            if (pressF11)
+            {
+                Thread.Sleep(5000);
+
+                keybd_event(VK_F11, 0, KEYEVENTF_KEYDOWN, 0);
+                keybd_event(VK_F11, 0, KEYEVENTF_KEYUP, 0);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("An error occurred: " + ex.Message);
+        }
+    }
+
+    private static void StartOnline()
+    {
+        Console.WriteLine("\n...Opening DPO online application on this device's browser...");
+
+        ProcessStartInfo startInfo = new ProcessStartInfo
+        {
+            FileName = $"http://{dpoServer}/manifesto/",
+            UseShellExecute = true,
+            Verb = "open",
+        };
+
+        try
+        {
+            Process browserProcess = new Process();
+            browserProcess.StartInfo = startInfo;
+            browserProcess.Start();
+            Thread.Sleep(5000);
+
+            keybd_event(VK_F11, 0, KEYEVENTF_KEYDOWN, 0);
+            keybd_event(VK_F11, 0, KEYEVENTF_KEYUP, 0);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("An error occurred: " + ex.Message);
+        }
+    }
+
+    private static string setNginxConfigContent(string httpPort, string phpPort) => $@"
+worker_processes  1;
+
+events {{
+    worker_connections  1024;
+}}
+
+http {{
+    include       mime.types;
+    default_type  application/octet-stream;
+    client_max_body_size 100M;
+
+    sendfile        on;
+
+    keepalive_timeout  65;
+
+    server {{
+        listen {httpPort};
+        server_name localhost;
+        root   html;
+
+        location / {{
+            index index.html index.htm index.php;
+
+            if ($request_method = 'OPTIONS') {{
+                add_header 'Access-Control-Allow-Origin' '*';
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
+                add_header 'Access-Control-Max-Age' 1728000;
+                add_header 'Content-Type' 'text/plain; charset=utf-8';
+                add_header 'Content-Length' 0;
+                return 204;
+            }}
+            if ($request_method = 'POST') {{
+                add_header 'Access-Control-Allow-Origin' '*' always;
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+                add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range' always;
+                add_header 'Access-Control-Expose-Headers' 'Content-Length,Content-Range' always;
+            }}
+            if ($request_method = 'GET') {{
+                add_header 'Access-Control-Allow-Origin' '*' always;
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+                add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range' always;
+                add_header 'Access-Control-Expose-Headers' 'Content-Length,Content-Range' always;
+            }}
+        }}
+        
+        location ~ \.php$ {{
+            fastcgi_pass 127.0.0.1:{phpPort};
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_read_timeout 180;
+            fastcgi_buffers 64 16k;
+            fastcgi_buffer_size 32k;
+            include fastcgi_params;
+        }}
+
+        location /nginx_status {{
+            stub_status on;
+            access_log   off;
+            allow 127.0.0.1;
+            deny all;
+        }}
+    }}
+}}";
+
+    private static string setNginxLoadBalancedConfigContent(string httpPort) => $@"
+worker_processes  1;
+
+events {{
+    worker_connections  1024;
+}}
+
+http {{
+    include       mime.types;
+    default_type  application/octet-stream;
+    client_max_body_size 100M;
+
+    sendfile        on;
+
+    keepalive_timeout  65;
+
+    server {{
+        listen 8001 default_server;
+        server_name web1.local.com;
+
+        location ~ \.php$ {{
+            fastcgi_pass 127.0.0.1:9001;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_read_timeout 180;
+            fastcgi_buffers 64 16k;
+            fastcgi_buffer_size 32k;
+            include fastcgi_params;
+        }}
+    }}
+
+    server {{
+        listen 8002 default_server;
+        server_name web2.local.com;
+
+        location ~ \.php$ {{
+            fastcgi_pass 127.0.0.1:9002;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_read_timeout 180;
+            fastcgi_buffers 64 16k;
+            fastcgi_buffer_size 32k;
+            include fastcgi_params;
+        }}
+    }}
+
+    server {{
+        listen 8003 default_server;
+        server_name web3.local.com;
+
+        location ~ \.php$ {{
+            fastcgi_pass 127.0.0.1:9003;
+            fastcgi_index index.php;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+            fastcgi_read_timeout 180;
+            fastcgi_buffers 64 16k;
+            fastcgi_buffer_size 32k;
+            include fastcgi_params;
+        }}
+    }}
+
+    upstream main {{
+        server 127.0.0.1:8001;
+        server 127.0.0.1:8002;
+        server 127.0.0.1:8003;
+    }}
+
+    server {{
+        listen {httpPort};
+        server_name localhost;
+        root   html;
+
+        location / {{
+            index index.html index.htm index.php;
+            proxy_pass http://main;
+
+            if ($request_method = 'OPTIONS') {{
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS';
+                add_header 'Access-Control-Max-Age' 1728000;
+                add_header 'Content-Type' 'text/plain; charset=utf-8';
+                add_header 'Content-Length' 0;
+                return 204;
+            }}
+            if ($request_method = 'POST') {{
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+                add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range' always;
+                add_header 'Access-Control-Expose-Headers' 'Content-Length,Content-Range' always;
+            }}
+            if ($request_method = 'GET') {{
+                add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
+                add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range' always;
+                add_header 'Access-Control-Expose-Headers' 'Content-Length,Content-Range' always;
+            }}
+        }}
+    }}
+}}";
+}

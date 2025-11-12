@@ -1,0 +1,276 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                      DPO MANAGER - SYSTEM ARCHITECTURE                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              GUI APPLICATION LAYER                            │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │                        Windows Forms GUI                                │  │
+│  │  • Configuration Panel    • Control Buttons    • Status Indicators     │  │
+│  │  • Activity Log          • Progress Bar        • Real-time Updates     │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           MANAGEMENT & CONTROL LAYER                          │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │   Server    │  │    Health    │  │   Browser    │  │    Ping      │     │
+│  │  Management │  │  Monitoring  │  │   Control    │  │  Monitoring  │     │
+│  │             │  │              │  │              │  │              │     │
+│  │ • Start     │  │ • 5s checks  │  │ • Launch     │  │ • Continuous │     │
+│  │ • Stop      │  │ • Auto-      │  │ • Fullscreen │  │ • Stats      │     │
+│  │ • Restart   │  │   recovery   │  │ • Graceful   │  │ • Status     │     │
+│  │ • Validate  │  │ • Logging    │  │   fallback   │  │ • Thread-    │     │
+│  │             │  │              │  │              │  │   based      │     │
+│  └─────────────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          VALIDATION & SAFETY LAYER                            │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐                 │
+│  │ Path Validator │  │ Port Checker   │  │ Error Handler  │                 │
+│  │                │  │                │  │                │                 │
+│  │ • nginx.exe    │  │ • Availability │  │ • Try-catch    │                 │
+│  │ • php-cgi.exe  │  │ • Retry logic  │  │ • Recovery     │                 │
+│  │ • Directories  │  │ • Timeout      │  │ • User dialogs │                 │
+│  └────────────────┘  └────────────────┘  └────────────────┘                 │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           PROCESS MANAGEMENT LAYER                            │
+│  ┌────────────────────────────────┐  ┌────────────────────────────────┐     │
+│  │          NGINX Process         │  │       PHP-CGI Process          │     │
+│  │                                │  │                                │     │
+│  │  Working Dir: ./nginx          │  │  Working Dir: ./php            │     │
+│  │  Executable: nginx.exe         │  │  Executable: php-cgi.exe       │     │
+│  │  Arguments: (none)             │  │  Arguments: -b 127.0.0.1:9000  │     │
+│  │  Port: Configurable (def: 80)  │  │  Port: 9000 (FastCGI)          │     │
+│  │                                │  │  Max Requests: 10,000          │     │
+│  │  • Health monitored            │  │  • Auto-restart enabled        │     │
+│  │  • PID tracked                 │  │  • PID tracked                 │     │
+│  │  • Graceful shutdown           │  │  • Graceful shutdown           │     │
+│  └────────────────────────────────┘  └────────────────────────────────┘     │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          LOGGING & MONITORING LAYER                           │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │                         Dual Logging System                             │  │
+│  │  ┌──────────────────────┐              ┌──────────────────────┐        │  │
+│  │  │   File Logging       │              │    GUI Logging       │        │  │
+│  │  │                      │              │                      │        │  │
+│  │  │ • Timestamped files  │◄────────────►│ • Real-time display  │        │  │
+│  │  │ • Persistent storage │              │ • Color-coded        │        │  │
+│  │  │ • Full history       │              │ • Scrollable         │        │  │
+│  │  │ • Format:            │              │ • User-friendly      │        │  │
+│  │  │   DPO_YYYYMMDD...log │              │                      │        │  │
+│  │  └──────────────────────┘              └──────────────────────┘        │  │
+│  └────────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           CONFIGURATION & STORAGE                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
+│  │   nginx/    │  │    php/     │  │   logs/     │  │   nginx/    │        │
+│  │             │  │             │  │             │  │   html/     │        │
+│  │ nginx.exe   │  │ php-cgi.exe │  │ DPO_*.log   │  │             │        │
+│  │ conf/       │  │ php.ini     │  │ Auto-rotate │  │ Web files   │        │
+│  │ Generated   │  │             │  │             │  │ PHP app     │        │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                            DATA FLOW DIAGRAM                                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+User Action (Click "Start Servers")
+         │
+         ▼
+    Validate Configuration
+    • Check DPO Server address
+    • Check HTTP Port value
+    • Check PHP Restart interval
+         │
+         ▼
+    Validate Paths
+    • nginx directory exists?
+    • nginx.exe exists?
+    • php directory exists?
+    • php-cgi.exe exists?
+         │
+         ├─NO──► Show Error Dialog ──► Return to GUI
+         │
+         ▼ YES
+    Kill Existing Processes
+    • Terminate all nginx processes
+    • Terminate all php-cgi processes
+    • Wait 1 second
+         │
+         ▼
+    Check Port Availability
+    • Is HTTP port free?
+    • Retry up to 10 times
+         │
+         ├─NO──► Show Port Conflict Error ──► Return to GUI
+         │
+         ▼ YES
+    Setup Web Root
+    • Create nginx/html if needed
+    • Grant IUSR permissions
+         │
+         ▼
+    Generate Nginx Config
+    • Create nginx.conf
+    • Configure FastCGI
+    • Set port and paths
+         │
+         ▼
+    Start Nginx
+    • Execute nginx.exe
+    • Capture output
+    • Verify process started
+         │
+         ├─FAIL──► Log Error ──► Stop & Return
+         │
+         ▼ SUCCESS
+    Wait 1 second
+         │
+         ▼
+    Start PHP-CGI
+    • Execute php-cgi.exe
+    • Set max requests = 10000
+    • Bind to 127.0.0.1:9000
+         │
+         ├─FAIL──► Log Error ──► Stop Nginx ──► Return
+         │
+         ▼ SUCCESS
+    Start Monitoring
+    • Enable health checks (5s timer)
+    • Enable PHP restart timer
+    • Update GUI status to green
+         │
+         ▼
+    Servers Running ✓
+    • User can open browser
+    • User can start ping
+    • Health checks active
+    • Auto-restart scheduled
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                          HEALTH CHECK FLOW                                    ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Every 5 seconds:
+    │
+    ▼
+Check Nginx Health
+    ├─► Process exists in process list?
+    ├─► Update GUI status indicator
+    └─► Log if status changed
+    │
+    ▼
+Check PHP-CGI Health
+    ├─► Process exists in process list?
+    ├─► Update GUI status indicator
+    └─► Log if status changed
+    │
+    ▼
+Any Process Failed?
+    │
+    ├─NO──► Continue monitoring
+    │
+    ▼ YES
+    Attempt Recovery
+    ├─► Log failure
+    ├─► Kill remaining processes
+    ├─► Wait 500ms
+    ├─► Restart failed process
+    └─► Verify success
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                        PHP AUTO-RESTART FLOW                                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+Every N minutes (default: 240):
+    │
+    ▼
+Increment restart counter
+Log restart initiation
+    │
+    ▼
+Kill PHP-CGI
+    ├─► Kill tracked process
+    ├─► Kill all php-cgi by name
+    └─► Update GUI status to red
+    │
+    ▼
+Wait for port release
+    ├─► Check port 9000 availability
+    ├─► Retry up to 5 times
+    └─► Wait 500ms between checks
+    │
+    ▼
+Restart PHP-CGI
+    ├─► Execute php-cgi.exe
+    ├─► Set max requests = 10000
+    └─► Bind to 127.0.0.1:9000
+    │
+    ├─SUCCESS──► Update GUI status to green ──► Log success
+    │
+    ▼ FAIL
+    Wait 2 seconds
+    Retry once
+    │
+    ├─SUCCESS──► Log recovery success
+    │
+    ▼ FAIL
+    Show critical error to user
+    Log critical failure
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                          PING MONITORING FLOW                                 ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+User clicks "Start Ping"
+    │
+    ▼
+Create background thread
+Create cancellation token
+    │
+    ▼
+While not cancelled:
+    │
+    ▼
+Send ICMP ping to DPO server
+    ├─► Timeout: 1000ms
+    └─► Wait for reply
+    │
+    ├─SUCCESS──► Log response time
+    │            Update GUI (green)
+    │            Increment success counter
+    │            Wait 1 second
+    │            Loop back
+    │
+    ▼ FAIL
+    Log failure
+    Update GUI (red)
+    Increment failure counter
+    Wait 1 second
+    Loop back
+
+User clicks "Stop Ping"
+    │
+    ▼
+Cancel token
+    ├─► Signal thread to stop
+    └─► Wait for thread termination (max 2s)
+    │
+    ▼
+Update GUI status to "Inactive" (gray)
+Clean up resources
+
